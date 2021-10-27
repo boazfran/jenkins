@@ -1,0 +1,33 @@
+pipeline {
+	agent any
+    stages {
+        stage('Create output directory') {
+            steps {
+		        sh "mkdir -p /work/jenkins/data/$BUILD_ID"
+		        sh "chmod 644 /work/jenkins/data/test.txt"
+            }        
+        }
+        stage('Run vdjbase pipeline') {
+			steps {
+				script {
+					def selected_projects = params['projects'].split(',')
+					def pipeline_jobs = [:]
+				    def project = selected_projects[i]
+				    def output_dir = '/work/jenkins/data/$BUILD_ID/$project'
+					for (i=0; i < selected_projects.length; i++) {
+						pipeline_jobs["$project"] = {
+							node {
+								stage("$project") {
+								    sh "mkdir -p $output_dir"
+								    sh "chmod 644 $output_dir"
+									sh "echo '$project' >> /work/jenkins/data/test.txt"
+								}
+							}
+						}
+					}
+					parallel pipeline_jobs
+				}
+			}
+        }
+    }
+}

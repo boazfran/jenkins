@@ -1,26 +1,36 @@
 pipeline {
+    // let jenkins balance the jobs between the nodes
     agent any
     stages {
+        // send notification that the build has started
+        stage('Notify build started') {
+            steps {
+                // notify build started
+                notifyBuild ('STARTED', params['projects'])
+            }
+        }
+        // create an output directory for the job
         stage('Create output directory') {
             steps {
                 sh "mkdir -p /work/jenkins/data/$BUILD_ID"
                 sh "chmod 644 /work/jenkins/data/test.txt"
             }        
         }
+        // create a job per sample
         stage('Run vdjbase pipeline') {
             steps {
                 script {
-                    def selected_projects = params['projects'].split(',')
+                    def selected_samples = params['projects'].split(',')
                     def pipeline_jobs = [:]
-                    def project = selected_projects[i]
-                    def output_dir = '/work/jenkins/data/$BUILD_ID/$project'
-                    for (i=0; i < selected_projects.length; i++) {
-                        pipeline_jobs["$project"] = {
+                    for (i=0; i < selected_samples.length; i++) {
+                        def sample = selected_samples[i]
+                        def output_dir = '/work/jenkins/data/$BUILD_ID/$sample'
+                        pipeline_jobs["$sample"] = {
                             node {
-                                stage("$project") {
+                                stage("$sample") {
                                     sh "mkdir -p $output_dir"
                                     sh "chmod 644 $output_dir"
-                                    sh "echo '$project' >> /work/jenkins/data/test.txt"
+                                    runPipeline ("$sample", output_dir)
                                 }
                             }
                         }
@@ -32,38 +42,56 @@ pipeline {
     }
     post {
         always {
-            emailext (body: 'A Test EMail', subject: 'Test', to: 'boazfr@gmail.com')
-            slackSend (color: '#FF0000', message: 'test')
+            notifyBuild (currentBuild.result, params['projects'])
         }
     }
 }
 
-
-def notifyBuild(String buildStatus) {
+def runPipeline(String sampleName, String outputDir, String numThreads="20") {
     
-    emailext (body: 'A Test EMail', subject: 'Test', to: 'boazfr@gmail.com')
+    def inputFile = '/work/peresay/vdjbase/fasta_files/' + sampleName + '.fasta'
+    def command = 'time nice -19 Rscript /localdata/peresay/scripts/vdjbase_pipeline.R'
+    // input file
+    command += ' -f ' + inputFile
+    // output path
+    command += ' -o ' + outputDir
+    // number of threads
+    command += ' -t ' + numThreads
+    // sample name
+    command += ' -s ' + sampleName
+    // short reads sample
+    if (sampleName.startsWith('P6_') || sampleName.startsWith('P5_') || sampleName.startsWith('P2_') || sampleName.startsWith('P13_') || sampleName.startsWith('P15_')) {
+        command += '--short_reads'
+    }
+    sh command
+}
+
+
+def notifyBuild(String buildStatus, String selectedSamples) {
     
     // build status of null means successful
     buildStatus =  buildStatus ?: 'SUCCESSFUL'
     
     // Default values
-    def colorName = 'RED'
-    def colorCode = '#FF0000'
-    def subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'"
-    def summary = "${subject} (${env.BUILD_URL})"
+    def subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}] started'"
+    def summary = "Samples: ${selectedSamples}\n Console: (${env.BUILD_URL}console)"
     
     // Override default values based on build status
     if (buildStatus == 'STARTED') {
-        color = 'YELLOW'
-        colorCode = '#FFFF00'
+        colorCode = '#FFFF00' // yellow
     } else if (buildStatus == 'SUCCESSFUL') {
-        color = 'GREEN'
-        colorCode = '#00FF00'
+        subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}] completed'"
+        summary = "Samples: ${selectedSamples}\n Console: (${env.BUILD_URL}console)\n Build status: ${buildStatus}\n Output Directory: '/work/jenkins/data/${env.BUILD_ID}"
+        colorCode = '#00FF00' // green
     } else {
-        color = 'RED'
-        colorCode = '#FF0000'
+        subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}] completed with errors'"
+        summary = "Job completed with erros\n Samples ${selectedSamples}\n Console: (${env.BUILD_URL}console})\n Build status: ${buildStatus}"
+        colorCode = '#FF0000' // red
     }
     
-    // Send notifications
-    slackSend (color: colorCode, message: buildStatus)
+    // send email notification
+    emailext (body: summary, subject: subject, to: 'boazfr@gmail.com')
+
+    // send slack notifications
+    //slackSend (color: colorCode, message: summary)
 }

@@ -6,30 +6,31 @@ pipeline {
         stage('Notify build started') {
             steps {
                 // notify build started
-                notifyBuild ('STARTED', params['projects'])
+                notifyBuild ('STARTED', getSelectedSamples(params))
             }
         }
         // create an output directory for the job
         stage('Create output directory') {
             steps {
                 sh "mkdir -p /work/jenkins/data/$BUILD_ID"
-                sh "chmod 644 /work/jenkins/data/test.txt"
+                sh "chmod 777 /work/jenkins/data/$BUILD_ID"
             }        
         }
         // create a job per sample
         stage('Run vdjbase pipeline') {
             steps {
                 script {
-                    def selected_samples = params['projects'].split(',')
                     def pipeline_jobs = [:]
-                    for (i=0; i < selected_samples.length; i++) {
-                        def sample = selected_samples[i]
-                        def output_dir = '/work/jenkins/data/$BUILD_ID/$sample'
+                    def selectedSamples = getSelectedSamples(params)
+                    selectedSamples = selectedSamples.split(',')
+                    for (i = 0; i < selectedSamples.length; i++) {
+                        def sample = selectedSamples[i]
+                        def output_dir = "/work/jenkins/data/$BUILD_ID/" + sample
                         pipeline_jobs["$sample"] = {
                             node {
                                 stage("$sample") {
-                                    sh "mkdir -p $output_dir"
-                                    sh "chmod 644 $output_dir"
+                                    sh "mkdir -p " + output_dir
+                                    sh "chmod 777 " + output_dir
                                     runPipeline ("$sample", output_dir)
                                 }
                             }
@@ -42,10 +43,28 @@ pipeline {
     }
     post {
         always {
-            notifyBuild (currentBuild.result, params['projects'])
+            notifyBuild (currentBuild.result, getSelectedSamples(params))
+        }
+        failure {
+            sh 'rm -rf /work/jenkins/data/$BUILD_ID/'
         }
     }
 }
+
+
+def getSelectedSamples(params) {
+    selectedSamples = ''
+    for (i = 1; i <= 15; i++) {
+        if (params["P" + "$i" + " Samples"] != '') {
+            if (selectedSamples != '') {
+                selectedSamples += ','
+            }
+            selectedSamples += params["P" + "$i" + " Samples"]
+        }
+    }
+    return selectedSamples
+}
+
 
 def runPipeline(String sampleName, String outputDir, String numThreads="20") {
     
@@ -61,8 +80,10 @@ def runPipeline(String sampleName, String outputDir, String numThreads="20") {
     command += ' -s ' + sampleName
     // short reads sample
     if (sampleName.startsWith('P6_') || sampleName.startsWith('P5_') || sampleName.startsWith('P2_') || sampleName.startsWith('P13_') || sampleName.startsWith('P15_')) {
-        command += '--short_reads'
+        command += ' --short_reads'
     }
+    sh "export IGDATA=/home/bcrlab/eitan/data/igblast/"
+    sh "LD_LIBRARY_PATH=/private/anaconda3/lib"
     sh command
 }
 
@@ -74,18 +95,18 @@ def notifyBuild(String buildStatus, String selectedSamples) {
     
     // Default values
     def subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}] started'"
-    def summary = "Samples: ${selectedSamples}\n Console: (${env.BUILD_URL}console)"
+    def summary = "Samples: ${selectedSamples}\nConsole: (${env.BUILD_URL}console)"
     
     // Override default values based on build status
     if (buildStatus == 'STARTED') {
         colorCode = '#FFFF00' // yellow
     } else if (buildStatus == 'SUCCESSFUL') {
         subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}] completed'"
-        summary = "Samples: ${selectedSamples}\n Console: (${env.BUILD_URL}console)\n Build status: ${buildStatus}\n Output Directory: '/work/jenkins/data/${env.BUILD_ID}"
+        summary = "Samples: ${selectedSamples}\nConsole: (${env.BUILD_URL}console)\nBuild status: ${buildStatus}\nOutput Directory: '/work/jenkins/data/${env.BUILD_ID}"
         colorCode = '#00FF00' // green
     } else {
         subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}] completed with errors'"
-        summary = "Job completed with erros\n Samples ${selectedSamples}\n Console: (${env.BUILD_URL}console})\n Build status: ${buildStatus}"
+        summary = "Samples ${selectedSamples}\nConsole: (${env.BUILD_URL}console)\nBuild status: ${buildStatus}"
         colorCode = '#FF0000' // red
     }
     
@@ -93,5 +114,5 @@ def notifyBuild(String buildStatus, String selectedSamples) {
     emailext (body: summary, subject: subject, to: 'boazfr@gmail.com')
 
     // send slack notifications
-    //slackSend (color: colorCode, message: summary)
+    //slackSend (color: colorCode, message: subject + '\n' + summary)
 }

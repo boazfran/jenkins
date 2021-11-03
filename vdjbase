@@ -1,6 +1,10 @@
 pipeline {
     // let jenkins balance the jobs between the nodes
     agent any
+    environment {
+        LD_LIBRARY_PATH='/private/anaconda3/lib'
+        IGDATA='/home/bcrlab/eitan/data/igblast/'
+    }
     stages {
         // send notification that the build has started
         stage('Notify build started') {
@@ -12,8 +16,8 @@ pipeline {
         // create an output directory for the job
         stage('Create output directory') {
             steps {
-                sh "mkdir -p /work/jenkins/data/$BUILD_ID"
-                sh "chmod 777 /work/jenkins/data/$BUILD_ID"
+                sh "mkdir -p /work/jenkins/vdjbase_runs/$BUILD_ID"
+                sh "chmod -R ugo+rw /work/jenkins/vdjbase_runs/$BUILD_ID"
             }        
         }
         // create a job per sample
@@ -25,12 +29,12 @@ pipeline {
                     selectedSamples = selectedSamples.split(',')
                     for (i = 0; i < selectedSamples.length; i++) {
                         def sample = selectedSamples[i]
-                        def output_dir = "/work/jenkins/data/$BUILD_ID/" + sample
+                        def output_dir = "/work/jenkins/vdjbase_runs/$BUILD_ID/"
                         pipeline_jobs["$sample"] = {
                             node {
                                 stage("$sample") {
                                     sh "mkdir -p " + output_dir
-                                    sh "chmod 777 " + output_dir
+                                    sh "chmod -R ugo+rw " + output_dir
                                     runPipeline ("$sample", output_dir)
                                 }
                             }
@@ -46,7 +50,7 @@ pipeline {
             notifyBuild (currentBuild.result, getSelectedSamples(params))
         }
         failure {
-            sh 'rm -rf /work/jenkins/data/$BUILD_ID/'
+            //sh 'rm -rf /work/jenkins/vdjbase_runs/$BUILD_ID/'
         }
     }
 }
@@ -82,8 +86,6 @@ def runPipeline(String sampleName, String outputDir, String numThreads="20") {
     if (sampleName.startsWith('P6_') || sampleName.startsWith('P5_') || sampleName.startsWith('P2_') || sampleName.startsWith('P13_') || sampleName.startsWith('P15_')) {
         command += ' --short_reads'
     }
-    sh "export IGDATA=/home/bcrlab/eitan/data/igblast/"
-    sh "LD_LIBRARY_PATH=/private/anaconda3/lib"
     sh command
 }
 
@@ -111,8 +113,8 @@ def notifyBuild(String buildStatus, String selectedSamples) {
     }
     
     // send email notification
-    emailext (body: summary, subject: subject, to: 'boazfr@gmail.com')
+    //emailext (body: summary, subject: subject, to: 'boazfr@gmail.com')
 
     // send slack notifications
-    //slackSend (color: colorCode, message: subject + '\n' + summary)
+    slackSend (color: colorCode, message: subject + '\n' + summary)
 }

@@ -50,7 +50,7 @@ pipeline {
             notifyBuild (currentBuild.result, getSelectedSamples(params))
         }
         failure {
-            //sh 'rm -rf /work/jenkins/vdjbase_runs/$BUILD_ID/'
+            sh 'rm -rf /work/jenkins/vdjbase_runs/$BUILD_ID/'
         }
     }
 }

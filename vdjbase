@@ -1,61 +1,6 @@
-pipeline {
-    // let jenkins balance the jobs between the nodes
-    agent any
-    environment {
-        LD_LIBRARY_PATH='/private/anaconda3/lib'
-        IGDATA='/home/bcrlab/eitan/data/igblast/'
-    }
-    stages {
-        // send notification that the build has started
-        stage('Notify build started') {
-            steps {
-                // notify build started
-                notifyBuild ('STARTED', getSelectedSamples(params))
-            }
-        }
-        // create an output directory for the job
-        stage('Create output directory') {
-            steps {
-                sh "mkdir -p /work/jenkins/vdjbase_runs/$BUILD_ID"
-                sh "chmod -R ugo+rw /work/jenkins/vdjbase_runs/$BUILD_ID"
-            }        
-        }
-        // create a job per sample
-        stage('Run vdjbase pipeline') {
-            steps {
-                script {
-                    def pipeline_jobs = [:]
-                    def selectedSamples = getSelectedSamples(params)
-                    selectedSamples = selectedSamples.split(',')
-                    for (i = 0; i < selectedSamples.length; i++) {
-                        def sample = selectedSamples[i]
-                        def output_dir = "/work/jenkins/vdjbase_runs/$BUILD_ID/"
-                        pipeline_jobs["$sample"] = {
-                            node {
-                                stage("$sample") {
-                                    sh "mkdir -p " + output_dir
-                                    sh "chmod -R ugo+rw " + output_dir
-                                    runPipeline ("$sample", output_dir)
-                                }
-                            }
-                        }
-                    }
-                    parallel pipeline_jobs
-                }
-            }
-        }
-    }
-    post {
-        always {
-            notifyBuild (currentBuild.result, getSelectedSamples(params))
-        }
-        failure {
-            sh 'rm -rf /work/jenkins/vdjbase_runs/$BUILD_ID/'
-        }
-    }
-}
 
 
+// paste together selected samples from all projects
 def getSelectedSamples(params) {
     selectedSamples = ''
     for (i = 1; i <= 15; i++) {
@@ -70,26 +15,7 @@ def getSelectedSamples(params) {
 }
 
 
-def runPipeline(String sampleName, String outputDir, String numThreads="20") {
-    
-    def inputFile = '/work/peresay/vdjbase/fasta_files/' + sampleName + '.fasta'
-    def command = 'time nice -19 Rscript /localdata/peresay/scripts/vdjbase_pipeline.R'
-    // input file
-    command += ' -f ' + inputFile
-    // output path
-    command += ' -o ' + outputDir
-    // number of threads
-    command += ' -t ' + numThreads
-    // sample name
-    command += ' -s ' + sampleName
-    // short reads sample
-    if (sampleName.startsWith('P6_') || sampleName.startsWith('P5_') || sampleName.startsWith('P2_') || sampleName.startsWith('P13_') || sampleName.startsWith('P15_')) {
-        command += ' --short_reads'
-    }
-    sh command
-}
-
-
+// send notifications about the build start or end
 def notifyBuild(String buildStatus, String selectedSamples) {
     
     // build status of null means successful
@@ -118,3 +44,78 @@ def notifyBuild(String buildStatus, String selectedSamples) {
     // send slack notifications
     slackSend (color: colorCode, message: subject + '\n' + summary)
 }
+
+
+// global parameters
+def selectedSamplesStr = getSelectedSamples(params)
+def build_dir = "/work/jenkins/vdjbase_runs/$BUILD_ID/"
+
+
+
+pipeline {
+    // let jenkins balance the jobs between the nodes
+    agent any
+    stages {
+        // send notification that the build has started
+        stage('Notify build started') {
+            steps {
+                // notify build started
+                notifyBuild ('STARTED', selectedSamplesStr)
+            }
+        }
+        // create an output directory for the job
+        stage('Create output directory') {
+            steps {
+                script {
+                    sh "mkdir -p ${build_dir}"
+                    sh "chmod -R ugo+rw ${build_dir}"
+                }
+            }        
+        }
+        // create a job per sample
+        stage('Run vdjbase pipeline') {
+            agent {
+                // use the vdjbase pipeline docker container
+                docker {
+                    image 'peresay/vdjbase_pipeline'
+                    args "-v ${build_dir}:/data:z -v /work/peresay/vdjbase/fasta_files/:/fasta_files:z"
+                }
+            }            
+            steps {
+                script {
+                    def pipeline_jobs = [:]
+                    //def selectedSamples = getSelectedSamples(params)
+                    //selectedSamples = selectedSamples.split(',')
+                    selectedSamples = selectedSamplesStr.split(',')
+                    for (i = 0; i < selectedSamples.length; i++) {
+                        def sample = selectedSamples[i]
+                        def output_dir = "/work/jenkins/vdjbase_runs/$BUILD_ID/"
+                        pipeline_jobs["$sample"] = {
+                            node {
+                                stage("$sample") {
+                                    if (sample.startsWith('P6_') || sample.startsWith('P5_') || sample.startsWith('P2_') || sample.startsWith('P13_') || sample.startsWith('P15_')) {
+                                        sh "vdjbase-pipeline -f /fasta_files/${sample}.fasta -s ${sample} -t 20 -o /data/ --short_reads"
+                                    } else {
+                                        sh "vdjbase-pipeline -f /fasta_files/${sample}.fasta -s ${sample} -t 20 -o /data/"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    parallel pipeline_jobs
+                }
+            }
+        }
+    }
+    post {
+        always {
+            notifyBuild (currentBuild.result, getSelectedSamples(params))
+        }
+        //failure {
+            //sh 'rm -rf /work/jenkins/vdjbase_runs/$BUILD_ID/'
+        //}
+    }
+}
+
+
+

@@ -1,0 +1,71 @@
+
+
+def args=''
+def str_params=['sequence_id_column', 'sequence_column', 'consensus_count_column', 'c_call_column', 'unique_columns', 'v_call', 'chain', 'num_alignments', 'conscount_filter', 'threads',  'subsample_size', 'clone_dist', 'constant_parameters_file']  
+def bool_params=['short_reads', 'subsample', 'remove_interm_files', 'tar_interm_files', 'cloned_genotyped']
+def build_dir = "/work/jenkins/align_n_annotate/$BUILD_ID/"
+
+
+pipeline {
+    agent any
+    // let jenkins balance the jobs between the nodes
+    stages {
+        // create an output directory for the job
+        stage('Create output directory') {
+            steps {
+                script {
+                    sh "mkdir -p ${build_dir}"
+                    sh "chmod -R ugo+rw ${build_dir}"
+                }
+            }        
+        }
+        // create a job per sample
+        stage('add arguments') {
+            steps {
+                script {
+					for (param in str_params) {
+					    if (params[param]?.trim()) {
+					        args += (' --' + param + '=' + params[param])
+					    }
+					}
+					for (param in bool_params) {
+					    if (params[param]) {
+					        args += (' --' + param)
+					    }
+					}
+                }
+            }
+        }
+        // run docker an dexecute the pipeline per input_file
+        stage('execute pipeline') {
+            steps {
+                script {
+                    input_files = params['input_files'].split(',')
+                    pipeline_jobs = [:]
+                    docker_revision = params['docker_revision']
+                    for (input_file in input_files) {
+                        if (!input_file.length()) {
+                            continue
+                        }
+                        def job_name = "${input_file.split('/')[-1].split('\\.')[0]}"
+                        def file_name = "${input_file.split('/')[-1]}"
+                        def dir_path = "${input_file[0..(input_file.length()-file_name.length()-1)]}"
+                        pipeline_jobs["$job_name"] = {
+                            node {
+                                stage("$job_name") {
+                                    sh "docker pull peresay/vdjbase_pipeline:${docker_revision}"
+                                    job_args = args + " --file=/work_dir/${file_name} --out.path=/data/" 
+                                    cmd = "nice -19 docker run --user \$(echo -n \$UID) --rm -v ${build_dir}:/data:z"
+                                    cmd += " -v ${dir_path}:/work_dir:z peresay/vdjbase_pipeline vdjbase-pipeline ${job_args}"
+                                    print(cmd)
+                                    sh cmd
+                                }
+                            }
+                        }
+                    }
+                    parallel pipeline_jobs
+                }
+            }
+        }
+    }
+}

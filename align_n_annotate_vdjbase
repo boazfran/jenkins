@@ -19,7 +19,7 @@ def getSelectedSamples(params) {
 def notifyBuild(String buildStatus, String selectedSamples) {
     
     // build status of null means successful
-    buildStatus =  buildStatus ?: 'SUCCESSFUL'
+    buildStatus =  buildStatus ?: 'SUCCESS'
     
     // Default values
     def subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}] started'"
@@ -28,7 +28,7 @@ def notifyBuild(String buildStatus, String selectedSamples) {
     // Override default values based on build status
     if (buildStatus == 'STARTED') {
         colorCode = '#FFFF00' // yellow
-    } else if (buildStatus == 'SUCCESSFUL') {
+    } else if (buildStatus == 'SUCCESS') {
         subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}] completed'"
         summary = "Samples: ${selectedSamples}\nConsole: (${env.BUILD_URL}console)\nBuild status: ${buildStatus}\nOutput Directory: '/work/jenkins/data/${env.BUILD_ID}"
         colorCode = '#00FF00' // green
@@ -50,11 +50,9 @@ def notifyBuild(String buildStatus, String selectedSamples) {
 def selectedSamplesStr = getSelectedSamples(params)
 def build_dir = "/work/jenkins/vdjbase_runs/$BUILD_ID/"
 
-
-
 pipeline {
-    // let jenkins balance the jobs between the nodes
     agent any
+    // let jenkins balance the jobs between the nodes
     stages {
         // send notification that the build has started
         stage('Notify build started') {
@@ -74,48 +72,38 @@ pipeline {
         }
         // create a job per sample
         stage('Run vdjbase pipeline') {
-            agent {
-                // use the vdjbase pipeline docker container
-                docker {
-                    image 'peresay/vdjbase_pipeline'
-                    args "-v ${build_dir}:/data:z -v /work/peresay/vdjbase/fasta_files/:/fasta_files:z"
-                }
-            }            
             steps {
                 script {
-                    def pipeline_jobs = [:]
-                    //def selectedSamples = getSelectedSamples(params)
-                    //selectedSamples = selectedSamples.split(',')
                     selectedSamples = selectedSamplesStr.split(',')
+                    def pipeline_jobs = [:]
                     for (i = 0; i < selectedSamples.length; i++) {
                         def sample = selectedSamples[i]
                         def output_dir = "/work/jenkins/vdjbase_runs/$BUILD_ID/"
                         pipeline_jobs["$sample"] = {
                             node {
                                 stage("$sample") {
+                                    sh "docker pull peresay/vdjbase_pipeline:latest"
+                                    cmd = "nice -19 docker run --user \$(echo -n \$UID) --rm -v ${build_dir}:/data:z -v /work/peresay/vdjbase/fasta_files/:/fasta_files:z peresay/vdjbase_pipeline"
+                                    cmd += " vdjbase-pipeline -f /fasta_files/${sample}.fasta -s ${sample} -t 20 -o /data/"
                                     if (sample.startsWith('P6_') || sample.startsWith('P5_') || sample.startsWith('P2_') || sample.startsWith('P13_') || sample.startsWith('P15_')) {
-                                        sh "vdjbase-pipeline -f /fasta_files/${sample}.fasta -s ${sample} -t 20 -o /data/ --short_reads"
-                                    } else {
-                                        sh "vdjbase-pipeline -f /fasta_files/${sample}.fasta -s ${sample} -t 20 -o /data/"
+                                        cmd += " --short_reads"
                                     }
+                                    sh cmd
                                 }
                             }
                         }
                     }
                     parallel pipeline_jobs
                 }
-            }
+            }        
         }
     }
     post {
         always {
             notifyBuild (currentBuild.result, getSelectedSamples(params))
         }
-        //failure {
-            //sh 'rm -rf /work/jenkins/vdjbase_runs/$BUILD_ID/'
-        //}
+        failure {
+            sh 'rm -rf /work/jenkins/vdjbase_runs/$BUILD_ID/'
+        }
     }
 }
-
-
-

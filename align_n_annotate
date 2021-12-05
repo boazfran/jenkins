@@ -10,6 +10,15 @@ pipeline {
     agent any
     // let jenkins balance the jobs between the nodes
     stages {
+        // rotate build folders - only keep last 10 builds folders - prevent over usage of storage
+        stage('Cleanup old builds') {
+            steps {
+                // keep only the last 10 build folders
+                script {
+                    sh "(cd /work/jenkins/vdjbase_runs/ && ls -tp | grep '/\$' | tail -n +10 | xargs -I {} rm -rf {})"
+                }
+            }
+        }
         // create an output directory for the job
         stage('Create output directory') {
             steps {
@@ -24,7 +33,7 @@ pipeline {
             steps {
                 script {
 					for (param in str_params) {
-					    if (params[param]?.trim()) {
+					    if (params[param]) {
 					        args += (' --' + param + '=' + params[param])
 					    }
 					}
@@ -33,6 +42,12 @@ pipeline {
 					        args += (' --' + param)
 					    }
 					}
+                    // if a custom germfile was provided then copy it to the build_dir
+				    if (params['germline_v_file']) {
+				        sh "cp ${params['germline_v_file']} ${build_dir}"
+				        vgerm_file = "${params['germline_v_file'].split('/')[-1]}"
+				        args += " --germline_v_file /data/${vgerm_file}"
+				    }
                 }
             }
         }
@@ -54,10 +69,9 @@ pipeline {
                             node {
                                 stage("$job_name") {
                                     sh "docker pull peresay/vdjbase_pipeline:${docker_revision}"
-                                    job_args = args + " --file=/work_dir/${file_name} --out.path=/data/" 
+                                    job_args = args + " --file=/input_dir/${file_name} --out.path=/data/" 
                                     cmd = "nice -19 docker run --user \$(echo -n \$UID) --rm -v ${build_dir}:/data:z"
-                                    cmd += " -v ${dir_path}:/work_dir:z peresay/vdjbase_pipeline vdjbase-pipeline ${job_args}"
-                                    print(cmd)
+                                    cmd += " -v ${dir_path}:/input_dir:z peresay/vdjbase_pipeline vdjbase-pipeline ${job_args}"
                                     sh cmd
                                 }
                             }
